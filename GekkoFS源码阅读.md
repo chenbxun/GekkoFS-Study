@@ -1,4 +1,4 @@
-[各源文件作用分析](各源文件作用分析.md)
+[各源文件作用总结](各源文件作用总结.md)
 
 ## GekkoFS 架构
 
@@ -8,11 +8,11 @@
 
 ### 创建文件
 
-​	元数据操作，在目标节点的键值数据库中为新建文件新增一条目。
+​	元数据操作，在元数据节点的键值数据库中为新建文件新增一条目。
 
 （1）客户端调用 libc 库
 
-​	调用open()函数，内部包含系统调用 sys_open。
+​	调用 open 函数，内部包含系统调用 sys_open。
 
 （2）syscall_intercept 拦截
 
@@ -40,7 +40,7 @@
 
 ### 写文件
 
-​	先修改元数据中文件大小一项，然后执行实际的写入。
+​	先修改元数据中文件大小一项，然后执行实际的数据写入。
 
 （1）客户端调用 libc 库
 
@@ -48,19 +48,19 @@
 
 （2）syscall_intercept 拦截
 
-​	sys_write 系统调用被拦截，实际执行 gkfs_write。如果用户在创建文件的时候未指定 O_APPEND，GekkoFS 会从 pos 处写入指定大小的数据，并更新 pos 的值，否则用户会根据 update_file_size 操作返回的偏移量来写入。这里我们假设是前一种情况。在 gkfs_do_write 中，首先更新文件大小为 max(offset + count, old_size)，若有 cache 则直接把更新后的 size 写入 cache，等到合适的时机再将 cache 的内容写回服务器后端；否则调用 forward_update_metadentry_size 向服务端发送update size 的请求，过程类似于文件创建。随后调用 forward_write 向服务端发送写请求。
+​	sys_write 系统调用被拦截，实际执行 gkfs_write。如果用户在创建文件的时候未指定 O_APPEND，GekkoFS 会从 pos 处写入指定大小的数据，并更新 pos 的值，否则用户会根据 update_file_size 操作返回的偏移量来写入。这里我们假设是前一种情况。在 gkfs_do_write 中，首先更新文件大小为 max(offset + count, old_size)，若有 cache 则直接把更新后的 size 写入 cache，等到合适的时机再将 cache 的内容写回后端服务器；否则调用 forward_update_metadentry_size 向服务端发送 update size 的请求，过程类似于文件创建。随后调用 forward_write 向服务端发送写请求。
 
 ​	函数调用链：hook_guard_wrapper() -> hook() -> hook_write() -> gkfs_write() -> gkfs_write_ws() -> gkfs_do_write()
 
 （3）Margo RPC client 转发请求
 
-​	gkfs_do_write 函数内部调用了 forward_write 函数与守护进程通信。forward_write 首先收集一些 write 操作所需要的信息，包括 chunk 下标范围和总数、所有目标节点的编号、所有目标节点需要写入的 chunk 集合、chunk 位示图、第一个和最后一个 chunk 对应的目标节点，然后准备发送 RPC 消息，包括创建并向远程主机暴露数据缓冲区，打包输入数据并发送异步 RPC 消息，最后等待所有请求返回结果。注意**客户端会将 chunk 按照目标节点分组，写入同一个节点的多个 chunk 共用同一个 RPC 消息**。
+​	gkfs_do_write 函数内部调用了 forward_write 函数与守护进程通信。forward_write 首先收集一些 write 操作所需要的信息，包括 chunk 下标范围和总数、所有目标节点的编号、每一个目标节点需要写入的 chunk 集合、chunk 位示图、第一个和最后一个 chunk 对应的目标节点，然后准备发送 RPC 消息，包括创建并向远程主机暴露数据缓冲区，打包输入数据并发送异步 RPC 消息，最后等待所有请求处理完毕并返回结果。注意**客户端会将 chunk 按照目标节点分组，写入同一个节点的多个 chunk 共用同一条 RPC 消息**。
 
 ​	函数调用链：gkfs_do_write () -> forward_write () -> ld_network_service->post\<gkfs::rpc::write_data\>()
 
 （4）Margo RPC server 接收请求
 
-​	守护进程收到 write 请求，调用和该消息绑定的 rpc_srv_write 函数。第一步是收集相关信息，包括反序列化 RPC 消息中的数据、获取 Margo 实例，缓冲区大小和位示图。第二步是准备好传输数据所用的缓冲区。第三步是分别计算每个 chunk 的实际大小、传输数据并启动异步写盘任务。对于每一个定位到本主机的 chunk，计算其大小，并调用 margo_bulk_transfer 进行 RDMA 传输，最后启动异步写入任务。第四步是等待所有任务执行完毕，数据持久化到本地存储，向客户端返回执行状态。可以看出对于同一个主机，**虽然 RPC 消息是以主机为单位 ，但数据传输和持久化到后端存储还是以 chunk 为单位**。 
+​	守护进程收到 write 请求，调用和该消息绑定的 rpc_srv_write 函数。第一步是收集相关信息，包括反序列化 RPC 消息中的数据、获取 Margo 实例、缓冲区大小和位示图。第二步是设置缓冲区，做好接收数据的准备。第三步是分别计算每个 chunk 的实际大小、执行数据传输并启动异步写盘任务。对于每一个定位到本主机的 chunk，计算其大小，并调用 margo_bulk_transfer 进行 RDMA 传输，最后启动异步写入任务。第四步是等待所有任务执行完毕，这时数据已持久化到本地存储，随后向客户端返回执行状态。可以看出，**虽然 RPC 消息是以主机为单位进行发送 ，但同一台主机上的数据传输和持久化还是以 chunk 为单位**。 
 
 ​	函数调用链：rpc_srv_write ()
 
@@ -76,11 +76,11 @@
 
 （1）客户端调用 libc 库
 
-​	调用read()函数，内部包含系统调用 sys_read。
+​	调用 read 函数，内部包含系统调用 sys_read。
 
 （2）syscall_intercept 拦截
 
-​	最终由 gkfs_do_read进行实际处理，内部调用了 forward_read 向守护进程发送读数据 RPC 消息。
+​	最终由 gkfs_do_read 进行实际处理，内部调用了 forward_read 向守护进程发送 read 类型的 RPC 消息。
 
 （3）Margo RPC client 转发请求
 
@@ -88,7 +88,7 @@
 
 （4）Margo RPC server 接收请求
 
-​	和 write 不同的是，read 的执行会首先启动异步读取任务，等某一个 chunk 读取完毕，再通过 RDMA 将这部分数据发送到客户端。等待方式包括轮询和阻塞两种类型。
+​	和 write 不同的是，守护进程在执行 read 时会首先启动异步读取任务，等某一个 chunk 读取完毕，再通过 RDMA 将这部分数据发送到客户端。等待方式包括轮询和阻塞两种类型。
 
 （5）Data Backend 将数据块从本地存储读入缓冲区
 
