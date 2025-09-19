@@ -2,7 +2,7 @@
 
 参考链接：
 
-[讲点"B树"，一文详解[B-树\]，[B+树]，[B*树]；及其优缺点比较， - 知乎](https://zhuanlan.zhihu.com/p/105066820)
+[讲点"B树"，一文详解B-树，B+树，B*树；及其优缺点比较， - 知乎](https://zhuanlan.zhihu.com/p/105066820)
 
 [图解：什么是B树？（心中有 B 树，做人要虚心）一文读懂B-树 - 知乎](https://zhuanlan.zhihu.com/p/146252512)
 

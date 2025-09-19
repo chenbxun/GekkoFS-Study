@@ -1,4 +1,4 @@
-#GekkoFS – A temporary burst buffer file system for HPC applications
+# GekkoFS – A temporary burst buffer file system for HPC applications
 
 ## 一、前置知识
 
