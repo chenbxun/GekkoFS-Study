@@ -2,7 +2,7 @@
 
 ## GekkoFS 架构
 
-<img src="images\GekkoFS结构.png" alt="GekkoFS结构" style="zoom: 67%;" />
+<img src="..\images\GekkoFS结构.png" alt="GekkoFS结构" style="zoom: 67%;" />
 
 ## 关键路径分析
 
